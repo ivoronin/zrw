@@ -249,8 +249,16 @@ func runChild(socketPath string) int {
 		return exitError
 	}
 
-	// Ignore SIGINT after spawn (so Ctrl-C only kills command)
-	signal.Ignore(syscall.SIGINT)
+	// Forward SIGINT to the spawned command
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT)
+	go func() {
+		for range sigCh {
+			if cmd.Process != nil {
+				_ = syscall.Kill(cmd.Process.Pid, syscall.SIGINT) //nolint:errcheck
+			}
+		}
+	}()
 
 	// Wait for command to complete
 	exitCode := exitSuccess
