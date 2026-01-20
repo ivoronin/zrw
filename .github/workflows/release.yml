@@ -8,4 +8,6 @@ on:
 jobs:
   release:
     uses: ivoronin/github-workflows/.github/workflows/release.yml@main
+    with:
+      language: go
     secrets: inherit
