@@ -8,4 +8,4 @@ on:
 
 jobs:
   test:
-    uses: ivoronin/github-workflows/.github/workflows/go-test.yml@main
+    uses: ivoronin/github-workflows/.github/workflows/test.yml@main
