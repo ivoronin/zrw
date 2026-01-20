@@ -35,7 +35,6 @@ type CommandRequest struct {
 	Env  map[string]string
 	Cmd  string
 	Args []string
-	Cwd  string
 }
 
 type CommandResult struct {
@@ -113,12 +112,6 @@ func runParent(zellijArgs []string, cmd string, cmdArgs []string) int {
 	}
 	defer listener.Close() //nolint:errcheck
 
-	// Get current working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("get working directory: %v", err)
-	}
-
 	// Get path to ourselves
 	selfPath, err := os.Executable()
 	if err != nil {
@@ -170,7 +163,6 @@ func runParent(zellijArgs []string, cmd string, cmdArgs []string) int {
 		Env:  getEnvMap(),
 		Cmd:  cmd,
 		Args: cmdArgs,
-		Cwd:  cwd,
 	}
 	if err := proto.Send(&req); err != nil {
 		log.Fatalf("send command request: %v", err)
@@ -231,7 +223,6 @@ func runChild(socketPath string) int {
 	// Execute command
 	cmd := exec.Command(req.Cmd, req.Args...)
 	cmd.Env = envList
-	cmd.Dir = req.Cwd
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
