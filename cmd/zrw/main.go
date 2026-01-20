@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ivoronin/argsieve"
 )
 
 var version = "dev"
@@ -31,10 +33,34 @@ const (
 
 // Protocol types - simple, no union wrapper
 
+// ErrorMode specifies behavior when command exits with non-zero code
+type ErrorMode int
+
+const (
+	ErrorModeNone ErrorMode = iota // Exit immediately
+	ErrorModeKeep                  // Keep pane open, parent exits immediately
+	ErrorModeWait                  // Keep pane open, parent waits for Ctrl-C
+)
+
+func (e *ErrorMode) UnmarshalText(text []byte) error {
+	switch string(text) {
+	case "exit":
+		*e = ErrorModeNone
+	case "keep":
+		*e = ErrorModeKeep
+	case "wait":
+		*e = ErrorModeWait
+	default:
+		return fmt.Errorf("invalid error mode: %s (expected: exit, keep, wait)", text)
+	}
+	return nil
+}
+
 type CommandRequest struct {
-	Env  map[string]string
-	Cmd  string
-	Args []string
+	Env       map[string]string
+	Cmd       string
+	Args      []string
+	ErrorMode ErrorMode
 }
 
 type CommandResult struct {
@@ -95,7 +121,7 @@ func getEnvMap() map[string]string {
 
 // Parent mode
 
-func runParent(zellijArgs []string, cmd string, cmdArgs []string) int {
+func runParent(zellijArgs []string, cmd string, cmdArgs []string, errorMode ErrorMode) int {
 	// Create temp directory with Unix socket
 	tmpDir, err := os.MkdirTemp("", "zrw-*")
 	if err != nil {
@@ -160,9 +186,10 @@ func runParent(zellijArgs []string, cmd string, cmdArgs []string) int {
 
 	// Send CommandRequest
 	req := CommandRequest{
-		Env:  getEnvMap(),
-		Cmd:  cmd,
-		Args: cmdArgs,
+		Env:       getEnvMap(),
+		Cmd:       cmd,
+		Args:      cmdArgs,
+		ErrorMode: errorMode,
 	}
 	if err := proto.Send(&req); err != nil {
 		log.Fatalf("send command request: %v", err)
@@ -227,6 +254,10 @@ func runChild(socketPath string) int {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// Set up signal handling
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT)
+
 	// Start command
 	if err := cmd.Start(); err != nil {
 		// Send error result
@@ -240,28 +271,40 @@ func runChild(socketPath string) int {
 		return exitError
 	}
 
-	// Forward SIGINT to the spawned command
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT)
+	// Wait for command in goroutine
+	doneCh := make(chan error, 1)
 	go func() {
-		for range sigCh {
-			if cmd.Process != nil {
-				_ = syscall.Kill(cmd.Process.Pid, syscall.SIGINT) //nolint:errcheck
-			}
-		}
+		doneCh <- cmd.Wait()
 	}()
 
-	// Wait for command to complete
+	// Forward signals to command until it exits
+	var waitErr error
+loop:
+	for {
+		select {
+		case waitErr = <-doneCh:
+			break loop
+		case sig := <-sigCh:
+			_ = cmd.Process.Signal(sig) //nolint:errcheck
+		}
+	}
+
+	// Process exit code
 	exitCode := exitSuccess
 	var cmdError string
-
-	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = exitError
-			cmdError = err.Error()
+			cmdError = waitErr.Error()
 		}
+	}
+
+	// Wait on error: wait for Ctrl-C BEFORE sending result (blocks parent)
+	if req.ErrorMode == ErrorModeWait && exitCode != 0 {
+		fmt.Fprintf(os.Stderr, "[zrw] Command exited with code %d. Press Ctrl-C to continue.\n", exitCode)
+		<-sigCh
 	}
 
 	// Send CommandResult
@@ -273,53 +316,74 @@ func runChild(socketPath string) int {
 		log.Fatalf("send command result: %v", err)
 	}
 
+	// Keep on error: wait for Ctrl-C AFTER sending result (parent exits immediately)
+	if req.ErrorMode == ErrorModeKeep && exitCode != 0 {
+		fmt.Fprintf(os.Stderr, "[zrw] Command exited with code %d. Press Ctrl-C to close.\n", exitCode)
+		<-sigCh
+	}
+
 	return exitSuccess
 }
 
 // CLI parsing
 
-func parseArgs(args []string) (zellijArgs []string, cmd string, cmdArgs []string, socketPath string) {
-	// Check for version flag
-	for _, arg := range args {
-		if arg == "--version" || arg == "-v" {
-			fmt.Println(version)
-			os.Exit(exitSuccess)
-		}
-	}
+type zrwOptions struct {
+	Version   bool      `short:"v" long:"version"`
+	OnError   ErrorMode `long:"on-error"`
+	ZrwSocket string    `long:"zrw-socket"`
+}
 
-	// Check for child mode (--zrw-socket=...)
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--zrw-socket=") {
-			socketPath = strings.TrimPrefix(arg, "--zrw-socket=")
-			return
-		}
-	}
+func printUsage() {
+	fmt.Fprintln(os.Stderr, "Usage: zrw [OPTIONS] [ZELLIJ_RUN_OPTIONS] -- <COMMAND> [ARGS...]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Options:")
+	fmt.Fprintln(os.Stderr, "  --on-error <mode>  Behavior on command failure:")
+	fmt.Fprintln(os.Stderr, "                       exit - zrw exits with command exit code (default)")
+	fmt.Fprintln(os.Stderr, "                       keep - zrw exits with command exit code, pane waits for Ctrl-C")
+	fmt.Fprintln(os.Stderr, "                       wait - pane waits for Ctrl-C, then zrw exits with command exit code")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Examples:")
+	fmt.Fprintln(os.Stderr, "  zrw -- ls -la")
+	fmt.Fprintln(os.Stderr, "  zrw -f -- htop                    # floating pane")
+	fmt.Fprintln(os.Stderr, "  zrw -f --width 80% -- vim file    # floating with size")
+	fmt.Fprintln(os.Stderr, "  zrw -n \"build\" -- cargo build     # named pane")
+	fmt.Fprintln(os.Stderr, "  zrw --on-error keep -- make       # keep pane on failure")
+	fmt.Fprintln(os.Stderr, "  zrw --on-error=wait -- make       # wait for Ctrl-C")
+	os.Exit(exitError)
+}
 
-	// Parent mode: find -- separator
-	separatorIdx := -1
-	for i, arg := range args {
-		if arg == "--" {
-			separatorIdx = i
-			break
-		}
-	}
+// Zellij run options that take arguments (need to pass through with their values)
+var zellijPassthrough = []string{
+	"--cwd", "-d", "--direction", "--height", "-n", "--name",
+	"--pinned", "--width", "-x", "-y",
+}
 
-	if separatorIdx == -1 || separatorIdx == len(args)-1 {
-		fmt.Fprintln(os.Stderr, "Usage: zrw [ZELLIJ_RUN_OPTIONS] -- <COMMAND> [ARGS...]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, "  zrw -- ls -la")
-		fmt.Fprintln(os.Stderr, "  zrw -f -- htop                    # floating pane")
-		fmt.Fprintln(os.Stderr, "  zrw -f --width 80% -- vim file    # floating with size")
-		fmt.Fprintln(os.Stderr, "  zrw -n \"build\" -- cargo build     # named pane")
+func parseArgs(args []string) (zellijArgs []string, cmd string, cmdArgs []string, socketPath string, errorMode ErrorMode) {
+	var opts zrwOptions
+	remaining, positional, err := argsieve.Sift(&opts, args, zellijPassthrough)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zrw: %v\n", err)
 		os.Exit(exitError)
 	}
 
-	zellijArgs = args[:separatorIdx]
-	cmd = args[separatorIdx+1]
-	if separatorIdx+2 < len(args) {
-		cmdArgs = args[separatorIdx+2:]
+	if opts.Version {
+		fmt.Println(version)
+		os.Exit(exitSuccess)
 	}
+
+	if opts.ZrwSocket != "" {
+		socketPath = opts.ZrwSocket
+		return
+	}
+
+	if len(positional) == 0 {
+		printUsage()
+	}
+
+	zellijArgs = remaining
+	cmd = positional[0]
+	cmdArgs = positional[1:]
+	errorMode = opts.OnError
 
 	return
 }
@@ -328,13 +392,13 @@ func main() {
 	log.SetPrefix("zrw: ")
 	log.SetFlags(0)
 
-	zellijArgs, cmd, cmdArgs, socketPath := parseArgs(os.Args[1:])
+	zellijArgs, cmd, cmdArgs, socketPath, errorMode := parseArgs(os.Args[1:])
 
 	if socketPath != "" {
 		// Child mode
 		os.Exit(runChild(socketPath))
 	} else {
 		// Parent mode
-		os.Exit(runParent(zellijArgs, cmd, cmdArgs))
+		os.Exit(runParent(zellijArgs, cmd, cmdArgs, errorMode))
 	}
 }
