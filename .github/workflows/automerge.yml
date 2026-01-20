@@ -1,0 +1,10 @@
+name: automerge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  automerge:
+    uses: ivoronin/github-workflows/.github/workflows/automerge.yml@main
+    secrets: inherit

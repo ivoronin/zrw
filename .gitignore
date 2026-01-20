@@ -1,0 +1,45 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Coverage
+*.out
+coverage.html
+
+# IDE / AI
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Docs (keep only README)
+*.md
+!README.md

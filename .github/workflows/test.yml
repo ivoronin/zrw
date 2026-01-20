@@ -1,0 +1,11 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    uses: ivoronin/github-workflows/.github/workflows/go-test.yml@main
