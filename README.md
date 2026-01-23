@@ -55,10 +55,43 @@ zrw -f -- kubectl logs -f deployment/api  # Watch logs in floating pane
 zrw -n "migrations" -- alembic upgrade head && zrw -- pytest tests/integration
 ```
 
-All `zellij run` options are supported. See `zellij run --help` for available options.
+### Options
+
+```
+zrw [ZRW_OPTIONS] [ZELLIJ_OPTIONS] -- <COMMAND> [ARGS...]
+```
+
+zrw accepts its own options alongside any `zellij run` options. Both can be mixed freely before the `--` delimiter. See `zellij run --help` for available zellij options.
+
+**zrw options:**
+
+```
+-v, --version        Show version
+--on-error <mode>    Behavior when command exits with non-zero code
+```
+
+### Error Handling Modes
+
+The `--on-error` option controls what happens when a command fails:
+
+| Mode | Parent behavior | Pane behavior |
+|------|-----------------|---------------|
+| `exit` | Exits immediately with command's exit code | Closes immediately |
+| `keep` | Exits immediately with command's exit code | Stays open until Ctrl-C |
+| `wait` | Blocks until Ctrl-C is pressed in pane | Stays open until Ctrl-C |
+
+**`exit`** (default) — Standard behavior. The pane closes and zrw exits as soon as the command finishes. Use this for scripted workflows where you don't need to inspect failures.
+
+**`keep`** — The pane remains open so you can inspect error output, but zrw exits immediately allowing your script to continue (or fail). Useful when running multiple commands and you want to see all failures without blocking.
 
 ```bash
-zrw --version
+zrw --on-error keep -- make build   # See build errors, script continues
+```
+
+**`wait`** — The pane remains open and zrw blocks until you press Ctrl-C. This gives you time to inspect the error before the parent script proceeds. Useful for interactive debugging where you want to pause on failures.
+
+```bash
+zrw --on-error wait -f -- make build   # Pause on build failure in floating pane
 ```
 
 ## Requirements
