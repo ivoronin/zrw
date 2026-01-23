@@ -360,7 +360,8 @@ var zellijPassthrough = []string{
 
 func parseArgs(args []string) (zellijArgs []string, cmd string, cmdArgs []string, socketPath string, errorMode ErrorMode) {
 	var opts zrwOptions
-	remaining, positional, err := argsieve.Sift(&opts, args, zellijPassthrough)
+	cfg := &argsieve.Config{RequirePositionalDelimiter: true}
+	remaining, positional, err := argsieve.Sift(&opts, args, zellijPassthrough, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zrw: %v\n", err)
 		os.Exit(exitError)
