@@ -1,6 +1,18 @@
 # zrw
 
-**z**ellij **r**un --**w**ait — run commands in Zellij panes with exit code propagation
+> **Deprecated:** As of [Zellij v0.44.0](https://github.com/zellij-org/zellij/releases/tag/v0.44.0), `zellij run` natively supports `--blocking`, `--block-until-exit-success`, and `--block-until-exit-failure` flags, making this tool unnecessary. Use `zellij run --blocking` instead.
+>
+> ```bash
+> # Before (zrw)
+> zrw -- make build && zrw -- make test
+>
+> # Now (native zellij)
+> zellij run --blocking -- make build && zellij run --blocking -- make test
+> ```
+
+---
+
+**z**ellij **r**un --**w**ait - run commands in Zellij panes with exit code propagation
 
 [![CI](https://github.com/ivoronin/zrw/actions/workflows/test.yml/badge.svg)](https://github.com/ivoronin/zrw/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/ivoronin/zrw)](https://github.com/ivoronin/zrw/releases)
@@ -80,15 +92,15 @@ The `--on-error` option controls what happens when a command fails:
 | `keep` | Exits immediately with command's exit code | Stays open until Ctrl-C |
 | `wait` | Blocks until Ctrl-C is pressed in pane | Stays open until Ctrl-C |
 
-**`exit`** (default) — Standard behavior. The pane closes and zrw exits as soon as the command finishes. Use this for scripted workflows where you don't need to inspect failures.
+**`exit`** (default) - Standard behavior. The pane closes and zrw exits as soon as the command finishes. Use this for scripted workflows where you don't need to inspect failures.
 
-**`keep`** — The pane remains open so you can inspect error output, but zrw exits immediately allowing your script to continue (or fail). Useful when running multiple commands and you want to see all failures without blocking.
+**`keep`** - The pane remains open so you can inspect error output, but zrw exits immediately allowing your script to continue (or fail). Useful when running multiple commands and you want to see all failures without blocking.
 
 ```bash
 zrw --on-error keep -- make build   # See build errors, script continues
 ```
 
-**`wait`** — The pane remains open and zrw blocks until you press Ctrl-C. This gives you time to inspect the error before the parent script proceeds. Useful for interactive debugging where you want to pause on failures.
+**`wait`** - The pane remains open and zrw blocks until you press Ctrl-C. This gives you time to inspect the error before the parent script proceeds. Useful for interactive debugging where you want to pause on failures.
 
 ```bash
 zrw --on-error wait -f -- make build   # Pause on build failure in floating pane
